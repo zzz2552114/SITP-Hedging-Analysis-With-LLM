@@ -1,0 +1,134 @@
+# 项目后端更新梳理与使用指南 (Walkthrough)
+
+此文档旨在对项目中引入 **FastAPI + Tortoise ORM (asyncmy) + 异步 API 重构** 进行全方位的复盘、讲解和使用场景指导。
+
+---
+
+## 🚀 1. 细致改动总结 (What changed)
+
+我们在原本仅提供了极少量 API（如下载 PDF/结果）的精简 [main.py](file:///e:/sitp-web/backend/main.py) 基础上，构建了一个拥有完整数据库层与复杂业务查询能力的后端架构：
+
+1.  **引入 Tortoise ORM 及 MySQL 支持**
+    *   **新增** [backend/app/database.py](file:///e:/sitp-web/backend/app/database.py): 配置了连接 MySQL 8.4 数据库的鉴权、网络端口信息及 `caching_sha2_password` 的支持（引入 `cryptography` 包）。
+    *   **新增** [backend/app/models.py](file:///e:/sitp-web/backend/app/models.py): 将原生业务对象完整映射为了 6 张表。包括基础公司信息、年度主营业务记录（核心用于比对渗透率的分母）、套期保值明细（含外键及业务数值）、公告及解析记录等。
+2.  **构建 Pydantic Schema 用于请求和响应串行化**
+    *   **新增** [backend/app/schemas.py](file:///e:/sitp-web/backend/app/schemas.py)、[backend/app/schemas_parse.py](file:///e:/sitp-web/backend/app/schemas_parse.py): 设立了十数个基类的 Pydantic 类型，涵盖针对外部输入和对前端返回的列表与分页结构。
+3.  **分离式 API 路由模块 (RESTful APIs)**
+    *   **新增** [backend/app/api/companies.py](file:///e:/sitp-web/backend/app/api/companies.py): 支持带名称或代码模糊搜索、支持分页返回公司目录。
+    *   **新增** [backend/app/api/businesses.py](file:///e:/sitp-web/backend/app/api/businesses.py): 年度主营业务查询，支持特定年份和“核心业务关键词”过滤。
+    *   **新增** [backend/app/api/commodities.py](file:///e:/sitp-web/backend/app/api/commodities.py): 返回期货商品分类（支持通过 parent_id 返回层级树）。
+    *   **新增** [backend/app/api/announcements.py](file:///e:/sitp-web/backend/app/api/announcements.py): 返回处理公告状态，特别是在 `/announcements/{id}/pdf` 通过**安全拦截防遍历**，直接以流（Stream）返回本地磁盘存储的对应公告源 PDF 文件。
+    *   **新增** [backend/app/api/hedges.py](file:///e:/sitp-web/backend/app/api/hedges.py): 包含查询单据的逻辑以及**渗透率聚类核心统计接口** `/compare/hedging_by_business`。
+    *   **新增** [backend/app/api/parse_webhook.py](file:///e:/sitp-web/backend/app/api/parse_webhook.py): 构建一个支持幂等的推入接口（Webhook），接纳大语言模型生成的分析套保结构数据并转储。
+4.  **自动化迁移与测试建设**
+    *   **重构/新增** [backend/test_api.py](file:///e:/sitp-web/backend/test_api.py): 支持 `pytest-asyncio` 的完全异步测试环境。利用 `tortoise_test_context` 拦截 SQLite 内存数据库虚拟执行 HTTP Client 发包的端到端用例。
+    *   **生成** 初始数据库映射脚本（基于 Aerich）。
+
+---
+
+## 🧠 2. 改动逻辑与原理分析 (Why we did it)
+
+本次迭代遵循 **“职责分离与全链路异步”** 的现代后端哲学，所有决定都有明确的逻辑支撑：
+
+### 2.1 为什么采用 Tortoise ORM (asyncmy)？
+传统 SQLAlchemy 过去只支持同步机制，容易在如爬虫或大量数据高频 IO 下阻塞 FastAPI 的事件环，造成系统“卡顿”。 Tortoise 是为 Asyncio 打造的 ORM 框架，结合 `asyncmy` 让对 MySQL 的读取以携程事件挂起，系统吞吐量有极大提升。
+
+### 2.2 为什么设计“接收 Webhook”而不是让 FastAPI 调度大模型？（解耦模型层）
+最初的设想是让 FastAPI 的 `Worker` 后台一直轮查“未解析订单”，调用 LLM 返回直接存入数据库。
+**修改后的逻辑**：FastAPI 提供接口接收大模型生成的最终结果（JSON）。
+*   **原理**：大模型的请求耗时长、易断流或受到 API 频率限制（Rate limit）。将耗时和不可控的流程移出主服务器（例如作为一个爬虫的后置独立清洗脚本执行），能避免长链接锁死后端连接池。FastAPI 作为服务端，收到什么就记下什么，即使模型服务断线，也不影响展示网站的使用。
+
+### 2.3 `parse_status` 与 `update_or_create` 带来的“幂等”容灾
+如果外部处理脚本崩溃，或对同一个公告重跑了模型并重新发包过来，会不会导致一条数据重复增加？
+*   **原理**：我使用 ORM 中的 `update_or_create` 方法，并针对套期细节表设计了“联合唯一键（公告ID、目录ID、年份、业务走向）”。这样发来的数据，当公告ID和业务相同时会自动覆盖之前的老数据，而非新插入。这就叫做**接口的幂等性(Idempotence)**——发一遍和发一百遍最终的数据库状态是一致的。
+
+### 2.4 需求4的“渗透率统计聚类分析”算法原理解析
+在 `/api/compare/hedging_by_business` 中执行了三段分离的非阻塞查询：
+1.  查询目标年份下特定的行业核心标签有哪些公司。得到一个基础分母（假定 10 个股票代码）。
+2.  用 `__in` 语法同时在 `hedging_business_detail` 取这 10 家公司在当年的所有套保详细行为（`prefetch_related` 拉取关联的商品名词）。
+3.  在内存中迭代这些记录，执行聚合（把该家名下所有品种放进 Set 排重），并标记状态（`has_hedging = True/False`），最后算出参与套保公司除以列表总数。这样就避开了一次写成过于复杂的极其拖慢性能的 GROUP BY SQL 语句。
+
+---
+
+## 📚 3. 使用方法与测试复现指南 (How to use)
+
+无论您是将代码移交、重新部署乃至进入下一轮测试阶段，请参阅该运行手册。
+
+### 3.1 环境安装配置
+
+确保你的虚拟环境已准备完毕，进入项目根路径并安装所有的依赖：
+```bash
+cd backend
+pip install "tortoise-orm[asyncmy]" aerich pydantic-settings cryptography pytest pytest-asyncio httpx
+```
+*(注意：`cryptography` 是用来支持较新版本 MySQL 的 SHA2 密码协议。如果不安装会在连接时报 `Not Found`)*
+
+在 [backend/app/database.py](file:///e:/sitp-web/backend/app/database.py) 已设定好访问凭据为：`Zhm@20070205`、用户 `root`、数据库实例 `sitp_hedging`。
+
+### 3.2 同步与拉起数据库（使用 Aerich）
+你现在的 `backend` 目录下已经存在了一个初始的迁移环境。如果需要抹除旧表重现建立，你可以打开 MySQL，删除整库并重建空库，然后在终端运行：
+
+```bash
+cd backend
+
+# (如果尚未执行或重置后) 创建结构并推入到远端 MySQL
+aerich init-db
+
+# (选填：日后如果更改了表结构，生成和同步新字段)
+aerich migrate
+aerich upgrade
+```
+*执行前通过查阅 MySQL GUI 客户端确认表是否顺利创立即可*
+
+### 3.3 运行并验证系统级联
+拉起 FastAPI 服务器：
+```bash
+cd backend
+uvicorn main:app --reload
+```
+打开浏览器访问 Swagger 在线文档调试页：`http://127.0.0.1:8000/docs`。你可以看到我们之前所有拆解进去的带有 Tag 的标签页与接口测试面板。
+
+### 3.4 **如何在外部大模型脚本中使用 Webhook API 返回结果**
+在你的外部 LLM 脚本中（你提到的已经写得很清楚的那个），只要跑完数据并规范成了我们商定的字段组合，就可以向咱们的后台发送 POST。
+这是一个从你的 Python 解析脚本（或爬虫）调用咱们系统的 Demo Snippet：
+
+```python
+import httpx
+import json
+
+# 假设对于公告 "ID_A123456" 已经有了你的大模型吐出的 json...
+llm_result_payload = {
+    # 数组形式包裹，无论一次提出多少种商品保值
+    "items": [
+        {
+            "commodity": "生猪", 
+            "hedging_limit": 50000.0, 
+            "hedging_direction": "卖出套保", 
+            "hedging_term": "6个月",
+            "business_desc": "规避猪肉价格大幅下跌带来的主营亏损"
+        }
+    ],
+    "parse_status": 1,  # 1表示成功（模型正常返回数据），如果是 2 可以在下面添加 parse_error 信息供前端页面告警
+    "llm_model": "deepseek-v3.2",
+    "prompt_version": "v1.0"
+}
+
+# 向我们重构好的后端推送结果：
+r = httpx.post("http://127.0.0.1:8000/api/announcements/ID_A123456/parsed", json=llm_result_payload)
+print(r.json()) # {"status": "success", "message": "解析结果已成功入库"}
+```
+> *(后台系统收到这段 JSON 后会自动帮你在 [FuturesCommodityCatalog](file:///e:/sitp-web/backend/app/models.py#28-39) 去找名叫“生猪”的门类，没有则创建。然后给该“ID_A123456”所属的“公司编号”挂钩插入一条套保流水。)*
+
+### 3.5 执行本地全生命周期的自动化测试
+为了保证改动代码日久弥新始终稳固，每次重构完成后切记在 `backend` 根目录跑一下由我们刚完成的测试集：
+
+```bash
+# 进入测试
+cd backend
+pytest test_api.py -v
+```
+
+你应该能够看到控制台上所有的输出以绿色 `PASSED` 展示，包含了一个模拟你上方“大模型发送结果进来并完成查库关联（[test_insert_company_and_webhook_success](file:///e:/sitp-web/backend/test_api.py#48-94)）”的闭环测试的绿灯结果。
+
+---
+这份涵盖原理讲解、容灾思维说明、数据库说明以及测试手段的综合说明将帮助本项目的维护者非常清晰地掌握咱们这一大轮开发的全部技术资产！
