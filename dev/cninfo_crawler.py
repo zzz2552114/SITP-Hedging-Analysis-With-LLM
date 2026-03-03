@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class CnInfoCrawler:
-    def __init__(self, config_file='config.ini'):
+    def __init__(self, config_file='config.ini', **kwargs):
         """初始化爬虫，读取配置文件"""
         # 获取配置文件路径（兼容开发和打包环境）
         if getattr(sys, 'frozen', False):
@@ -37,16 +37,33 @@ class CnInfoCrawler:
         # API基础URL
         self.base_url = "https://www.cninfo.com.cn/new/fulltextSearch/full"
         
-        # 读取配置
-        self.search_key = self.config.get('settings', 'search_key')
-        self.start_date = self.config.get('settings', 'start_date')
-        self.end_date = self.config.get('settings', 'end_date')
-        filter_keywords_str = self.config.get('settings', 'filter_keywords')
+        # 读取配置 (优先使用后端传来的kwargs，其次尝试config.ini，都没有则回退安全默认值)
+        def get_cfg(key, default):
+            if key in kwargs and kwargs[key] is not None:
+                return kwargs[key]
+            if self.config.has_section('settings') and self.config.has_option('settings', key):
+                return self.config.get('settings', key)
+            return default
+
+        self.search_key = get_cfg('search_key', '套期保值')
+        self.start_date = get_cfg('start_date', '2024-01-01')
+        self.end_date = get_cfg('end_date', '2024-12-31')
+        filter_keywords_str = get_cfg('filter_keywords', '')
         self.filter_keywords = [kw.strip() for kw in filter_keywords_str.split(',') if kw.strip()]
-        self.page_size = self.config.getint('settings', 'page_size')
-        self.data_path = self.config.get('settings', 'data_path')
-        self.pdf_path = self.config.get('settings', 'pdf_path')
-        self.excel_file = self.config.get('settings', 'excel_file')
+        
+        # 特殊处理int
+        if 'page_size' in kwargs and kwargs['page_size'] is not None:
+            self.page_size = int(kwargs['page_size'])
+        elif self.config.has_section('settings') and self.config.has_option('settings', 'page_size'):
+            self.page_size = self.config.getint('settings', 'page_size')
+        else:
+            self.page_size = 30
+            
+        # 设置统一存放路径 (项目根目录下的 data 文件夹)
+        root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.data_path = get_cfg('data_path', os.path.join(root_dir, 'data'))
+        self.pdf_path = get_cfg('pdf_path', os.path.join(self.data_path, 'pdfs'))
+        self.excel_file = get_cfg('excel_file', 'crawled_data.xlsx')
         
         # 创建目录
         os.makedirs(self.data_path, exist_ok=True)

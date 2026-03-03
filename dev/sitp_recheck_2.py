@@ -13,9 +13,10 @@ MODEL_DEEPSEEK = "deepseek-v3.2"
 MODEL_QWEN_TRANS = "qwen-plus-2025-09-11"
 MODEL_QWEN_NORM = "qwen-plus-2025-09-11"
 MODEL_QWEN_VALIDATE = "qwen3-max"
-# 目录等设置
-PDF_DIR = "./pdfs"
-OUT_DIR = "./out_txt"
+# 目录等设置 (修改为相对根目录的统一存放路径，避免找不到目录报错并在后续被参数覆盖)
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PDF_DIR = os.path.join(ROOT_DIR, "data", "pdfs")
+OUT_DIR = os.path.join(ROOT_DIR, "data", "out_txt")
 MAX_CHARS = 200_000
 
 # 是否启用 Qwen 验证
@@ -447,7 +448,27 @@ def build_prompt_qwen_trans(full_data: dict) -> str:
 
 
 # 主流程：输出4份文件
-def main():
+def main(api_key=None, model_settings=None, pdf_dir=None, out_dir=None):
+    global API_KEY, MODEL_DEEPSEEK, MODEL_QWEN_NORM, MODEL_QWEN_VALIDATE, MODEL_QWEN_TRANS, PDF_DIR, OUT_DIR
+    
+    # 动态注入后端传入的API Key与模型配置
+    if api_key:
+        API_KEY = api_key
+    if model_settings:
+        # 模型名字对应 a/b/c/d 等（由后端映射，也可以直接传字母对应的真实模型名）
+        # 1.分析模型
+        if 'analysis' in model_settings: MODEL_DEEPSEEK = model_settings['analysis']
+        # 2.数据处理模型
+        if 'processing' in model_settings: MODEL_QWEN_NORM = model_settings['processing']
+        # 3.recheck-llm
+        if 'recheck' in model_settings: MODEL_QWEN_VALIDATE = model_settings['recheck']
+        # 4.翻译模型
+        if 'translation' in model_settings: MODEL_QWEN_TRANS = model_settings['translation']
+    if pdf_dir:
+        PDF_DIR = pdf_dir
+    if out_dir:
+        OUT_DIR = out_dir
+
     os.makedirs(OUT_DIR, exist_ok=True)
 
     pdf_files = sorted(glob.glob(os.path.join(PDF_DIR, "*.pdf")))
