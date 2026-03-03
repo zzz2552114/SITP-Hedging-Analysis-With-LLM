@@ -80,8 +80,8 @@ async def process_unparsed_announcements(api_key: str, model_settings: dict = No
                 )
 
                 await HedgingBusinessDetail.update_or_create(
-                    announcement_id_id=ann.announcement_id,
-                    catalog_id_id=catalog.catalog_id,
+                    announcement_id=ann.announcement_id,
+                    catalog_id=catalog.catalog_id,
                     biz_year=ann.biz_year,
                     hedging_direction=item.get("hedging_direction"),
                     defaults={

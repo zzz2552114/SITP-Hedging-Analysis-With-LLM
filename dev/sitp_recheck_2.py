@@ -3,7 +3,49 @@ import json
 import glob
 import copy
 import fitz
+import httpx
 from openai import OpenAI
+
+# ---- Webhook 回调：将解析结果推送给 FastAPI 入库 ----
+WEBHOOK_BASE = "http://127.0.0.1:8000/api"
+
+def _push_to_webhook(file_name: str, patched: dict, model_name: str):
+    """从 patched JSON 提取关键字段，POST 给 /api/announcements/{id}/parsed"""
+    try:
+        meta = patched.get("meta", {})
+        hedge = patched.get("hedge", {})
+        limits = patched.get("limits", {})
+
+        # 用文件名（不含扩展名）作为 announcement_id
+        ann_id = os.path.splitext(file_name)[0]
+
+        commodities = hedge.get("underlying_commodities", {}).get("value", []) or []
+        margin = limits.get("margin_total", {}).get("value")
+
+        items = []
+        for c in commodities:
+            items.append({
+                "commodity": c if isinstance(c, str) else str(c),
+                "hedging_limit": float(margin) / 10000 if margin else None,  # 元 → 万元
+                "hedging_direction": hedge.get("exposure_direction", {}).get("value"),
+                "hedging_term": str(patched.get("validity", {}).get("auth_months", {}).get("value", "")) + "个月"
+                                if patched.get("validity", {}).get("auth_months", {}).get("value") else None,
+                "business_desc": hedge.get("purpose_one_sentence", {}).get("value"),
+            })
+
+        payload = {
+            "items": items,
+            "parse_status": 1,
+            "llm_model": model_name,
+        }
+
+        resp = httpx.post(f"{WEBHOOK_BASE}/announcements/{ann_id}/parsed", json=payload, timeout=10)
+        if resp.status_code == 200:
+            print(f"  ✔ Webhook 入库成功: {ann_id}")
+        else:
+            print(f"  ✘ Webhook 返回 {resp.status_code}: {resp.text}")
+    except Exception as e:
+        print(f"  ✘ Webhook 推送失败（不影响文件输出）: {e}")
 
 
 API_KEY = None
@@ -528,6 +570,9 @@ def main(api_key=None, model_settings=None, pdf_dir=None, out_dir=None):
         CN_path = os.path.join(OUT_DIR, f"{name}__qwen_patched_CN.txt")
         with open(CN_path, "w", encoding="utf-8") as f:
             f.write(json.dumps(cn_data, ensure_ascii=False, indent=2))
+
+        # 将解析结果推给 FastAPI Webhook 自动入库
+        _push_to_webhook(file_name, patched, MODEL_DEEPSEEK)
 
         print(f"{base} 处理完毕\n")
 
