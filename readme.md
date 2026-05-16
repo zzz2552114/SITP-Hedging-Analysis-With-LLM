@@ -1,4 +1,4 @@
-按本文步骤操作可以在本地启动后端（uvicorn）和前端（Vite），可以看到前后端交互。我已检查仓库结构并为后端生成了建议的 requirements.txt 内容，请把它保存到 backend/requirements.txt 后按步骤执行。
+按本文步骤操作可以在本地启动后端（uvicorn）和前端（Vite），可以看到前后端交互。
 
 # SITP-Hedging-Analysis-With-LLM — 使用说明
 
