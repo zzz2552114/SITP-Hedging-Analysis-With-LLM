@@ -21,7 +21,7 @@
 
 ## 1. 获取源码
 ```bash
-git clone https://github.com/zzz2552114/SITP-Hedging-Analysis-With-LLM.git
+git clone https://gitee.com/zzz2552114/SITP-Hedging-Analysis-With-LLM
 cd SITP-Hedging-Analysis-With-LLM
 ```
 
