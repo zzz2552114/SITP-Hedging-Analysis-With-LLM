@@ -28,7 +28,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.database import TORTOISE_ORM
 from app.models import FuturesContract, FuturesDailyKline
 
-TOKEN = "367d69635d3da84aa954b446e6dae00d99c741262ac5a65d51411916"
+TOKEN = os.environ.get("TUSHARE_TOKEN", "")
+if not TOKEN:
+    raise RuntimeError("请设置环境变量 TUSHARE_TOKEN，例如: export TUSHARE_TOKEN=your_token")
 pro = ts.pro_api(TOKEN)
 
 # 全交易所
