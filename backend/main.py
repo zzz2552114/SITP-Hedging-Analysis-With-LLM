@@ -16,7 +16,7 @@ from cninfo_crawler import CnInfoCrawler
 import sitp_recheck_2
 
 # 路由和后台任务引入
-from app.api import companies, businesses, commodities, announcements, hedges, parse_webhook
+from app.api import companies, businesses, commodities, announcements, hedges, parse_webhook, futures_kline
 from app.database import TORTOISE_ORM
 from app.worker import process_unparsed_announcements
 
@@ -38,6 +38,7 @@ app.include_router(commodities.router, prefix="/api", tags=["Commodities"])
 app.include_router(announcements.router, prefix="/api", tags=["Announcements"])
 app.include_router(hedges.router, prefix="/api", tags=["Hedging Details"])
 app.include_router(parse_webhook.router, prefix="/api", tags=["Parse Webhook"])
+app.include_router(futures_kline.router, prefix="/api", tags=["Futures Kline"])
 
 # 注册 ORM
 register_tortoise(

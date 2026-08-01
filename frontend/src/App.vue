@@ -61,6 +61,11 @@
           <el-icon><DataAnalysis /></el-icon>
           <span>渗透率统计</span>
         </el-menu-item>
+
+        <el-menu-item index="/futures-kline">
+          <el-icon><TrendCharts /></el-icon>
+          <span>期货日K行情</span>
+        </el-menu-item>
       </el-menu>
 
       <div class="collapse-btn" @click="isCollapse = !isCollapse">

@@ -49,6 +49,12 @@ const routes = [
     component: () => import("../views/Compare.vue"),
     meta: { title: "渗透率统计" },
   },
+  {
+    path: "/futures-kline",
+    name: "FuturesKline",
+    component: () => import("../views/FuturesKline.vue"),
+    meta: { title: "期货日K行情" },
+  },
 ];
 
 const router = createRouter({

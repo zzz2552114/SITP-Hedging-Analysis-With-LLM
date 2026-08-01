@@ -88,3 +88,45 @@ class AnnouncementParseResult(models.Model):
 
     class Meta:
         table = "announcement_parse_result"
+
+
+class FuturesContract(models.Model):
+    """期货合约品种主表，存放从 Tushare 获取的所有可交易合约"""
+    ts_code = fields.CharField(max_length=20, primary_key=True)   # e.g. CU2501.SHF
+    symbol = fields.CharField(max_length=10, db_index=True)       # e.g. CU
+    name = fields.CharField(max_length=50, db_index=True)         # e.g. 沪铜2501
+    exchange = fields.CharField(max_length=10, db_index=True)     # SHFE/DCE/CZCE/CFFEX/INE/GFEX
+    fut_code = fields.CharField(max_length=10, db_index=True)     # 品种代码 e.g. CU
+    pinyin_initial = fields.CharField(max_length=1, db_index=True, default='')  # 品种首字母，供前端分组
+    list_date = fields.CharField(max_length=8, null=True)
+    delist_date = fields.CharField(max_length=8, null=True)
+
+    class Meta:
+        table = "futures_contract"
+
+
+class FuturesDailyKline(models.Model):
+    """期货日K线数据"""
+    id = fields.BigIntField(primary_key=True)
+    ts_code = fields.ForeignKeyField("models.FuturesContract", related_name="klines", to_field="ts_code", db_constraint=True)
+    trade_date = fields.CharField(max_length=8, db_index=True)  # YYYYMMDD
+    pre_close = fields.FloatField(null=True)
+    pre_settle = fields.FloatField(null=True)
+    open = fields.FloatField(null=True)
+    high = fields.FloatField(null=True)
+    low = fields.FloatField(null=True)
+    close = fields.FloatField(null=True)
+    settle = fields.FloatField(null=True)
+    change1 = fields.FloatField(null=True)   # 涨跌1 (收盘价-昨结算价)
+    change2 = fields.FloatField(null=True)   # 涨跌2 (收盘价-昨收盘价)
+    vol = fields.FloatField(null=True)       # 成交量(手)
+    amount = fields.FloatField(null=True)    # 成交金额(万元)
+    oi = fields.FloatField(null=True)        # 持仓量(手)
+    oi_chg = fields.FloatField(null=True)    # 持仓变化
+
+    class Meta:
+        table = "futures_daily_kline"
+        unique_together = (("ts_code", "trade_date"),)
+        indexes = (
+            ("ts_code", "trade_date"),
+        )

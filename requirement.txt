@@ -5,3 +5,5 @@ aerich>=0.8.0
 aiomysql>=0.0.21
 python-dotenv>=1.0.0
 httpx>=0.24.0
+tushare>=1.4.0
+pypinyin>=0.51.0
